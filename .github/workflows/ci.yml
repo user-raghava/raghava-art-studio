@@ -1,0 +1,171 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+
+  pull_request:
+    branches: [main]
+
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+
+  # ==========================================
+  # BACKEND
+  # ==========================================
+
+  backend:
+    name: Backend - Test & Verify
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Set up Java 21
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      - name: Run Maven verification
+        run: mvn -B verify
+
+
+  # ==========================================
+  # FRONTEND
+  # ==========================================
+
+  frontend:
+    name: Frontend - Build
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: frontend
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js 24
+        uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build frontend
+        run: npm run build
+
+  # ==========================================
+  # DOCKER BUILD / SCAN / PUSH
+  # ==========================================
+
+  docker:
+    name: Docker - Build Scan Push
+    needs: [backend, frontend,]
+    runs-on: ubuntu-latest
+
+    steps:
+
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+
+      # ----------------------------------------
+      # BUILD IMAGES
+      # ----------------------------------------
+
+      - name: Build backend image
+        run: |
+          docker build \
+            -t raghava-art-backend:${{ github.sha }} \
+            ./backend
+
+      - name: Build frontend image
+        run: |
+          docker build \
+            -t raghava-art-frontend:${{ github.sha }} \
+            ./frontend
+
+
+      # ----------------------------------------
+      # DOCKER HUB LOGIN
+      # ----------------------------------------
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+
+      # ----------------------------------------
+      # TAG BACKEND
+      # ----------------------------------------
+
+      - name: Tag backend image
+        run: |
+          docker tag \
+            raghava-art-backend:${{ github.sha }} \
+            ${{ secrets.DOCKERHUB_USERNAME }}/raghava-art-backend:${{ github.sha }}
+
+          docker tag \
+            raghava-art-backend:${{ github.sha }} \
+            ${{ secrets.DOCKERHUB_USERNAME }}/raghava-art-backend:latest
+
+
+      # ----------------------------------------
+      # TAG FRONTEND
+      # ----------------------------------------
+
+      - name: Tag frontend image
+        run: |
+          docker tag \
+            raghava-art-frontend:${{ github.sha }} \
+            ${{ secrets.DOCKERHUB_USERNAME }}/raghava-art-frontend:${{ github.sha }}
+
+          docker tag \
+            raghava-art-frontend:${{ github.sha }} \
+            ${{ secrets.DOCKERHUB_USERNAME }}/raghava-art-frontend:latest
+
+
+      # ----------------------------------------
+      # PUSH BACKEND
+      # ----------------------------------------
+
+      - name: Push backend image
+        run: |
+          docker push \
+            ${{ secrets.DOCKERHUB_USERNAME }}/raghava-art-backend:${{ github.sha }}
+
+          docker push \
+            ${{ secrets.DOCKERHUB_USERNAME }}/raghava-art-backend:latest
+
+
+      # ----------------------------------------
+      # PUSH FRONTEND
+      # ----------------------------------------
+
+      - name: Push frontend image
+        run: |
+          docker push \
+            ${{ secrets.DOCKERHUB_USERNAME }}/raghava-art-frontend:${{ github.sha }}
+
+          docker push \
+            ${{ secrets.DOCKERHUB_USERNAME }}/raghava-art-frontend:latest
